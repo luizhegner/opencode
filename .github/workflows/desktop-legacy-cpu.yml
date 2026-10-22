@@ -28,10 +28,14 @@ jobs:
           ref: v${{ inputs.version }}
           fetch-depth: 1
 
-      - name: Install dependencies and Bun
+      - name: Install dependencies and Bun (desktop + CLI only)
         uses: ./.github/actions/setup-bun
         with:
           bun-version: 1.4.2
+          # Do not install unrelated console workspaces. The upstream catalog points
+          # @solidjs/start at a pkg.pr.new build that currently returns HTTP 404.
+          # Desktop and CLI, plus their workspace dependency trees, are sufficient.
+          install-flags: --filter 'opencode...' --filter '@opencode/desktop...' --filter '@opencode/cli...'
 
       - name: Setup Node.js for Node SEA
         uses: actions/setup-node@v5

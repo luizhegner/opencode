@@ -94,7 +94,7 @@ jobs:
           node <<'NODE'
           const fs = require("node:fs")
           const file = "packages/desktop/scripts/prebuild.ts"
-          const source = fs.readFileSync(file, "utf8")
+          const source = fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n")
           const old = `if (channel === "dev") await downloadCliToResources()
           if ((channel === "beta" || channel === "prod") && Bun.env.OPENCODE_CLI_DIST) {
             await copyBuiltCliToResources(Bun.env.OPENCODE_CLI_DIST)

@@ -24,7 +24,9 @@ jobs:
       - name: Checkout OpenCode source
         uses: actions/checkout@v4
         with:
+          repository: anomalyco/opencode
           ref: v${{ inputs.version }}
+
 
       - name: Install dependencies and Bun
         uses: ./.github/actions/setup-bun

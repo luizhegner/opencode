@@ -1,0 +1,159 @@
+name: OpenCode Desktop - Legacy CPU (Node CLI)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: OpenCode version tag without the v prefix
+        required: true
+        default: "2.0.16"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout upstream OpenCode source
+        uses: actions/checkout@v5
+        with:
+          repository: anomalyco/opencode
+          ref: v${{ inputs.version }}
+          fetch-depth: 1
+
+      - name: Install dependencies and Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: 1.4.2
+
+      - name: Setup Node.js for Node SEA
+        uses: actions/setup-node@v5
+        with:
+          node-version: "26.4.0"
+
+      - name: Build Node CLI app archive
+        run: |
+          bun packages/cli/script/build-node.ts \
+            --app-archive-only \
+            --app-archive=.cache/app-archive.bin \
+            --skip-install
+        env:
+          OPENCODE_VERSION: ${{ inputs.version }}
+          OPENCODE_CHANNEL: dev
+
+      - name: Build Node-based Windows CLI
+        run: |
+          bun packages/cli/script/build-node.ts \
+            --target=windows-x64 \
+            --skip-install \
+            --outdir=dist/node \
+            --app-archive=.cache/app-archive.bin
+        env:
+          OPENCODE_VERSION: ${{ inputs.version }}
+          OPENCODE_CHANNEL: dev
+
+      - name: Test Node-based CLI
+        run: |
+          ./packages/cli/dist/node/cli-node-windows-x64/bin/opencode2-node.exe --version
+          ./packages/cli/dist/node/cli-node-windows-x64/bin/opencode2-node.exe --help
+
+      - name: Stage Node CLI for the desktop packager
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs")
+          const path = require("node:path")
+
+          const source = "packages/cli/dist/node/cli-node-windows-x64/bin/opencode2-node.exe"
+          const packageDir = "packages/cli/dist/cli-windows-x64-baseline"
+          const target = path.join(packageDir, "bin", "opencode.exe")
+
+          if (!fs.existsSync(source)) throw new Error(`Node CLI not found: ${source}`)
+          fs.rmSync(packageDir, { recursive: true, force: true })
+          fs.mkdirSync(path.dirname(target), { recursive: true })
+          fs.copyFileSync(source, target)
+
+          const version = process.env.OPENCODE_VERSION || require("./packages/cli/package.json").version
+          fs.writeFileSync(
+            path.join(packageDir, "package.json"),
+            JSON.stringify({ name: "@opencode/cli-windows-x64-baseline", version, license: "MIT" }, null, 2) + "\n",
+          )
+          console.log(`Staged Node CLI as desktop backend, version ${version}`)
+          NODE
+        env:
+          OPENCODE_VERSION: ${{ inputs.version }}
+
+      - name: Adapt desktop prebuild to use the Node CLI
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs")
+          const file = "packages/desktop/scripts/prebuild.ts"
+          const source = fs.readFileSync(file, "utf8")
+          const old = `if (channel === "dev") await downloadCliToResources()
+          if ((channel === "beta" || channel === "prod") && Bun.env.OPENCODE_CLI_DIST) {
+            await copyBuiltCliToResources(Bun.env.OPENCODE_CLI_DIST)
+          }
+          if (channel === "beta" && !Bun.env.OPENCODE_CLI_DIST) await downloadCliToResources("beta")`
+          const replacement = `if (Bun.env.OPENCODE_CLI_DIST) {
+            await copyBuiltCliToResources(Bun.env.OPENCODE_CLI_DIST)
+          } else if (channel === "dev") {
+            await downloadCliToResources()
+          } else if (channel === "beta") {
+            await downloadCliToResources("beta")
+          }`
+
+          if (!source.includes(old)) throw new Error("Expected desktop prebuild code was not found; refusing to patch a different source version")
+          fs.writeFileSync(file, source.replace(old, replacement))
+          console.log("Desktop prebuild will now bundle the staged Node-based CLI")
+          NODE
+
+      - name: Prepare desktop package
+        working-directory: packages/desktop
+        run: bun ./scripts/prepare.ts
+        env:
+          OPENCODE_VERSION: ${{ inputs.version }}
+          OPENCODE_CHANNEL: dev
+          OPENCODE_CLI_TARGET: x86_64-pc-windows-msvc
+          OPENCODE_CLI_DIST: ${{ github.workspace }}/packages/cli/dist
+
+      - name: Build desktop UI
+        working-directory: packages/desktop
+        run: bun run build
+        env:
+          OPENCODE_VERSION: ${{ inputs.version }}
+          OPENCODE_CHANNEL: dev
+          OPENCODE_CLI_TARGET: x86_64-pc-windows-msvc
+          OPENCODE_CLI_DIST: ${{ github.workspace }}/packages/cli/dist
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Verify the desktop bundles the Node CLI
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs")
+          const crypto = require("node:crypto")
+          const hash = (file) => crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex")
+          const cli = "packages/cli/dist/node/cli-node-windows-x64/bin/opencode2-node.exe"
+          const bundled = "packages/desktop/resources/opencode-cli.exe"
+          if (!fs.existsSync(bundled)) throw new Error(`Bundled desktop CLI not found: ${bundled}`)
+          if (hash(cli) !== hash(bundled)) throw new Error("Desktop bundled a different CLI than the Node-based build")
+          console.log("Verified: desktop backend is the Node-based CLI")
+          NODE
+
+      - name: Package Windows desktop installer
+        working-directory: packages/desktop
+        run: npx electron-builder --win --config electron-builder.config.ts --publish never
+        env:
+          OPENCODE_CHANNEL: dev
+
+      - name: Upload desktop installer and unpacked app
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode-desktop-legacy-cpu-windows-x64
+          path: packages/desktop/dist/
+          if-no-files-found: error

@@ -1,0 +1,66 @@
+
+name: OpenCode 2 - Legacy CPU Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: OpenCode version
+        required: true
+        default: "2.0.16"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout OpenCode source
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+
+      - name: Install dependencies and Bun
+        uses: ./.github/actions/setup-bun
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "26.4.0"
+
+      - name: Build app archive
+        run: |
+          bun packages/cli/script/build-node.ts \
+            --app-archive-only \
+            --app-archive=.cache/app-archive.bin \
+            --skip-install
+        env:
+          OPENCODE_VERSION: ${{ inputs.version }}
+
+      - name: Build Windows Node executable
+        run: |
+          bun packages/cli/script/build-node.ts \
+            --target=windows-x64 \
+            --skip-install \
+            --outdir=dist/node \
+            --app-archive=.cache/app-archive.bin
+        env:
+          OPENCODE_VERSION: ${{ inputs.version }}
+
+      - name: Test executable
+        run: |
+          ./packages/cli/dist/node/cli-node-windows-x64/bin/opencode2-node.exe --version
+          ./packages/cli/dist/node/cli-node-windows-x64/bin/opencode2-node.exe --help
+
+      - name: Upload executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: opencode2-node-windows-x64
+          path: packages/cli/dist/node/cli-node-windows-x64/
+          if-no-files-found: error

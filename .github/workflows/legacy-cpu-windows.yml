@@ -46,12 +46,12 @@ jobs:
       - name: Build Windows Node executable
         run: |
           bun packages/cli/script/build-node.ts \
-            --target=windows-x64 \
             --skip-install \
             --outdir=dist/node
         env:
           OPENCODE_VERSION: ${{ inputs.version }}
           OPENCODE_APP_ARCHIVE: .cache/app-archive.bin
+          OPENCODE_TARGET: windows-x64
 
       - name: Test executable
         run: |

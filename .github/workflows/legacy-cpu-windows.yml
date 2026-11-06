@@ -26,6 +26,11 @@ jobs:
           repository: anomalyco/opencode
           ref: v${{ inputs.version }}
 
+      - name: Use Node runtime with Windows libuv shutdown fix
+        run: |
+          sed -i 's/const NODE_VERSION = "26.4.0"/const NODE_VERSION = "26.13.0"/' packages/cli/script/build-node.ts
+          grep -F 'const NODE_VERSION = "26.13.0"' packages/cli/script/build-node.ts
+
       - name: Install dependencies and Bun
         uses: ./.github/actions/setup-bun
 
